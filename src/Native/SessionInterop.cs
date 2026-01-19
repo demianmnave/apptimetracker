@@ -16,6 +16,7 @@ public static class SessionInterop
     public const uint WTS_SESSION_UNLOCK = 8;
     public const uint WTS_CONSOLE_CONNECT = 1;
     public const uint WTS_CONSOLE_DISCONNECT = 2;
+    public const uint WTS_SESSION_DISCONNECT = WTS_CONSOLE_DISCONNECT;
 
     // Constants for window creation
     public const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;

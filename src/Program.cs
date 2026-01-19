@@ -72,10 +72,12 @@ try
 
     // Register core service implementations
     builder.Services.AddSingleton<ISessionMonitorService, SessionMonitorService>();
+    builder.Services.AddSingleton<IFocusMonitorService, FocusMonitorService>();
 
-    // Register hosted services (order matters: DatabaseInitializer first, then SessionMonitorService, then Worker)
+    // Register hosted services (order matters: DatabaseInitializer first, then SessionMonitorService, then FocusMonitorService, then Worker)
     builder.Services.AddHostedService<DatabaseInitializer>();
     builder.Services.AddHostedService<SessionMonitorService>();
+    builder.Services.AddHostedService<FocusMonitorService>();
     builder.Services.AddHostedService<Worker>();
 
     // Configure shutdown timeout for graceful shutdown
