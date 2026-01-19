@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -68,19 +70,46 @@ try
         }
     });
 
-    // Register hosted services
+    // Register core service implementations
+    builder.Services.AddSingleton<ISessionMonitorService, SessionMonitorService>();
+
+    // Register hosted services (order matters: DatabaseInitializer first, then SessionMonitorService, then Worker)
     builder.Services.AddHostedService<DatabaseInitializer>();
+    builder.Services.AddHostedService<SessionMonitorService>();
     builder.Services.AddHostedService<Worker>();
 
     // Configure shutdown timeout for graceful shutdown
     builder.Services.Configure<HostOptions>(options =>
     {
-        options.ShutdownTimeout = TimeSpan.FromSeconds(30);
+        var shutdownTimeout = builder.Configuration.GetValue("Service:GracefulShutdownTimeoutSeconds", 30);
+        options.ShutdownTimeout = TimeSpan.FromSeconds(shutdownTimeout);
+        Log.Information("Configured graceful shutdown timeout: {Timeout} seconds", shutdownTimeout);
     });
+
+    // Create Windows Event Log source if running on Windows and not already registered
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+    {
+        try
+        {
+            if (!EventLog.SourceExists("AppTimeTracker"))
+            {
+                EventLog.CreateEventSource("AppTimeTracker", "Application");
+                Log.Information("Created Windows Event Log source: AppTimeTracker");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to create Event Log source (may require admin rights or already exists)");
+        }
+    }
 
     var host = builder.Build();
 
-    Log.Information("AppTimeTracker service configured successfully");
+    // Log startup information with version
+    var version = Assembly.GetExecutingAssembly().GetName().Version;
+    Log.Information("AppTimeTracker service configured successfully. Version: {Version}, Started: {StartTime}",
+        version ?? new Version(0, 0, 0, 0),
+        DateTime.UtcNow);
 
     await host.RunAsync();
 }
