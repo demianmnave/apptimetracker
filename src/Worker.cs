@@ -14,6 +14,7 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ISessionMonitorService _sessionMonitor;
+    private readonly IFocusMonitorService _focusMonitor;
     private readonly IConfiguration _configuration;
 
     // Current active session being tracked (null if no app has focus)
@@ -23,15 +24,20 @@ public class Worker : BackgroundService
     // Tracking pause state
     private bool _isTrackingPaused;
 
+    // Minimum session duration filter (1 second)
+    private const int MinSessionDurationSeconds = 1;
+
     public Worker(
         ILogger<Worker> logger,
         IServiceProvider serviceProvider,
         ISessionMonitorService sessionMonitor,
+        IFocusMonitorService focusMonitor,
         IConfiguration configuration)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _sessionMonitor = sessionMonitor;
+        _focusMonitor = focusMonitor;
         _configuration = configuration;
     }
 
@@ -45,6 +51,9 @@ public class Worker : BackgroundService
         // Subscribe to session state changes
         _sessionMonitor.SessionStateChanged += OnSessionStateChanged;
 
+        // Subscribe to focus change events
+        _focusMonitor.FocusChanged += OnFocusChanged;
+
         try
         {
             // Set initial tracking state based on session
@@ -52,8 +61,6 @@ public class Worker : BackgroundService
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                // Placeholder: Focus monitoring will be implemented in a future milestone
-                // For now, just keep the service running and responsive to shutdown
                 await Task.Delay(1000, stoppingToken);
             }
         }
@@ -70,6 +77,7 @@ public class Worker : BackgroundService
         finally
         {
             _sessionMonitor.SessionStateChanged -= OnSessionStateChanged;
+            _focusMonitor.FocusChanged -= OnFocusChanged;
         }
     }
 
@@ -200,29 +208,86 @@ public class Worker : BackgroundService
                     break;
 
                 case SessionState.Locked when pauseOnLock && !_isTrackingPaused:
-                    // Workstation locked - pause and persist current session
-                    _logger.LogInformation("Workstation locked. Pausing tracking.");
-                    _isTrackingPaused = true;
+                    {
+                        // Workstation locked - pause and persist current session
+                        _logger.LogInformation("Workstation locked. Pausing tracking.");
+                        _isTrackingPaused = true;
 
-                    // Persist any active session immediately
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    await PersistCurrentSessionAsync(cts.Token);
-                    break;
+                        // Persist any active session immediately
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await PersistCurrentSessionAsync(cts.Token);
+                        break;
+                    }
 
                 case SessionState.Disconnected:
-                    // User switched away or logged off - pause and persist
-                    _logger.LogInformation("Session disconnected. Pausing tracking.");
-                    _isTrackingPaused = true;
+                    {
+                        // User switched away or logged off - pause and persist
+                        _logger.LogInformation("Session disconnected. Pausing tracking.");
+                        _isTrackingPaused = true;
 
-                    // Persist any active session immediately
-                    using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    await PersistCurrentSessionAsync(cts2.Token);
-                    break;
+                        // Persist any active session immediately
+                        using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await PersistCurrentSessionAsync(cts2.Token);
+                        break;
+                    }
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling session state change");
+        }
+    }
+
+    /// <summary>
+    /// Handles focus changes to a new application window.
+    /// Ends the previous session and starts tracking the new focused application.
+    /// Ignores focus changes shorter than 1 second.
+    /// </summary>
+    private void OnFocusChanged(object? sender, FocusChangeEventArgs? e)
+    {
+        if (e == null) return;
+
+        // Don't track if tracking is paused (session locked/disconnected)
+        if (_isTrackingPaused)
+        {
+            return;
+        }
+
+        try
+        {
+            lock (_sessionLock)
+            {
+                // If there's a current session, check if it meets minimum duration
+                if (_currentSession != null)
+                {
+                    var sessionDuration = (int)(DateTime.UtcNow - _currentSession.StartTimeUtc).TotalSeconds;
+
+                    // Only persist sessions that lasted at least 1 second
+                    if (sessionDuration >= MinSessionDurationSeconds)
+                    {
+                        _currentSession.EndTimeUtc = DateTime.UtcNow;
+                        _currentSession.CalculateDuration();
+
+                        // Persist the session (fire and forget, don't block focus changes)
+                        _ = PersistCurrentSessionAsync(CancellationToken.None);
+                    }
+                    else
+                    {
+                        _logger.LogDebug(
+                            "Ignoring session for {ProcessName} - duration {Duration}s is less than minimum {Min}s",
+                            _currentSession.ProcessName,
+                            sessionDuration,
+                            MinSessionDurationSeconds);
+                    }
+                }
+
+                // Start tracking the newly focused application
+                StartNewSession(e.ProcessName, e.ExecutablePath, e.WindowTitle, _sessionMonitor.CurrentUserId ?? "Unknown");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling focus change");
         }
     }
 }

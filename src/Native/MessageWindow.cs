@@ -8,7 +8,7 @@ namespace AppTimeTracker.Native;
 /// </summary>
 public class MessageWindow : IDisposable
 {
-    private readonly ILogger<MessageWindow> _logger;
+    private readonly ILogger _logger;
     private IntPtr _hwnd = IntPtr.Zero;
     private Thread? _messageThread;
     private ManualResetEvent? _windowCreatedEvent;
@@ -22,7 +22,7 @@ public class MessageWindow : IDisposable
 
     public event EventHandler<SessionStateEventArgs>? SessionStateChanged;
 
-    public MessageWindow(ILogger<MessageWindow> logger)
+    public MessageWindow(ILogger logger)
     {
         _logger = logger;
     }

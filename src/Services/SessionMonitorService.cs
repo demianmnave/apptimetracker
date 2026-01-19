@@ -55,7 +55,7 @@ public class SessionMonitorService : ISessionMonitorService
             _logger.LogInformation("Session monitor starting. Current user: {UserId}", _currentUserId ?? "Unknown");
 
             // Create and initialize message window
-            _messageWindow = new MessageWindow(_logger);
+            _messageWindow = new MessageWindow(_logger as ILogger);
             _messageWindow.SessionStateChanged += OnSessionStateChanged;
 
             await Task.Run(() => _messageWindow.CreateWindow(), cancellationToken);
