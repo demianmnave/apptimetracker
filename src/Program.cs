@@ -74,6 +74,9 @@ try
     builder.Services.AddSingleton<ISessionMonitorService, SessionMonitorService>();
     builder.Services.AddSingleton<IFocusMonitorService, FocusMonitorService>();
 
+    // Register data repository
+    builder.Services.AddScoped<IUsageRepository, UsageRepository>();
+
     // Register hosted services (order matters: DatabaseInitializer first, then SessionMonitorService, then FocusMonitorService, then Worker)
     builder.Services.AddHostedService<DatabaseInitializer>();
     builder.Services.AddHostedService<SessionMonitorService>();
