@@ -43,8 +43,10 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("AppTimeTracker Worker started at: {Time}", DateTimeOffset.Now);
-        _logger.LogInformation("Current user: {UserId}, Session state: {State}",
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        _logger.LogInformation("AppTimeTracker Worker started - Version: {Version}, Time: {Time}, User: {UserId}, Session: {State}",
+            version ?? new System.Version(0, 0, 0, 0),
+            DateTimeOffset.Now,
             _sessionMonitor.CurrentUserId ?? "Unknown",
             _sessionMonitor.CurrentState);
 
@@ -71,7 +73,8 @@ public class Worker : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Worker encountered an unexpected error");
+            _logger.LogError(ex, "Worker encountered an unexpected error - Exception: {ExceptionType}, Message: {Message}, StackTrace: {StackTrace}",
+                ex.GetType().FullName, ex.Message, ex.StackTrace);
             throw;
         }
         finally
@@ -193,12 +196,18 @@ public class Worker : BackgroundService
     /// </summary>
     private async void OnSessionStateChanged(object? sender, SessionStateChangeEventArgs? e)
     {
-        if (e == null) return;
+        if (e == null)
+        {
+            _logger.LogWarning("SessionStateChanged event received with null arguments");
+            return;
+        }
 
         var pauseOnLock = _configuration.GetSection("SessionMonitoring").GetValue("PauseOnLock", true);
 
         try
         {
+            _logger.LogDebug("Session state changed for user {UserId}: {OldState} -> {NewState}",
+                e.UserId, e.PreviousState, e.NewState);
             switch (e.NewState)
             {
                 case SessionState.Active when _isTrackingPaused:
@@ -245,16 +254,23 @@ public class Worker : BackgroundService
     /// </summary>
     private void OnFocusChanged(object? sender, FocusChangeEventArgs? e)
     {
-        if (e == null) return;
+        if (e == null)
+        {
+            _logger.LogWarning("FocusChanged event received with null arguments");
+            return;
+        }
 
         // Don't track if tracking is paused (session locked/disconnected)
         if (_isTrackingPaused)
         {
+            _logger.LogDebug("Focus change ignored - tracking is paused for {ProcessName}", e.ProcessName);
             return;
         }
 
         try
         {
+            _logger.LogDebug("Focus changed to {ProcessName} (PID: {ProcessId}), Tracking paused: {TrackingPaused}",
+                e.ProcessName, e.ProcessId, _isTrackingPaused);
             lock (_sessionLock)
             {
                 // If there's a current session, check if it meets minimum duration
