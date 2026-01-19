@@ -12,7 +12,7 @@ namespace AppTimeTracker;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ISessionMonitorService _sessionMonitor;
     private readonly IFocusMonitorService _focusMonitor;
     private readonly IConfiguration _configuration;
@@ -29,13 +29,13 @@ public class Worker : BackgroundService
 
     public Worker(
         ILogger<Worker> logger,
-        IServiceProvider serviceProvider,
+        IServiceScopeFactory serviceScopeFactory,
         ISessionMonitorService sessionMonitor,
         IFocusMonitorService focusMonitor,
         IConfiguration configuration)
     {
         _logger = logger;
-        _serviceProvider = serviceProvider;
+        _serviceScopeFactory = serviceScopeFactory;
         _sessionMonitor = sessionMonitor;
         _focusMonitor = focusMonitor;
         _configuration = configuration;
@@ -104,6 +104,7 @@ public class Worker : BackgroundService
 
     /// <summary>
     /// Saves the current tracking session to the database if one exists.
+    /// Uses IUsageRepository for atomic transaction support.
     /// </summary>
     private async Task PersistCurrentSessionAsync(CancellationToken cancellationToken)
     {
@@ -128,20 +129,19 @@ public class Worker : BackgroundService
         {
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                using var scope = _serviceScopeFactory.CreateScope();
+                var repository = scope.ServiceProvider.GetRequiredService<IUsageRepository>();
 
                 // Check if session already exists (was previously saved)
                 if (sessionToSave.Id > 0)
                 {
-                    dbContext.AppUsageSessions.Update(sessionToSave);
+                    await repository.UpdateSessionAsync(sessionToSave, cancellationToken);
                 }
                 else
                 {
-                    dbContext.AppUsageSessions.Add(sessionToSave);
+                    await repository.SaveSessionAsync(sessionToSave, cancellationToken);
                 }
 
-                await dbContext.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation(
                     "Persisted session for {ProcessName}, Duration: {Duration}s",
                     sessionToSave.ProcessName,
