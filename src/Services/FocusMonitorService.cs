@@ -17,6 +17,11 @@ public class FocusMonitorService : IFocusMonitorService
 
     public event EventHandler<FocusChangeEventArgs>? FocusChanged;
 
+    /// <summary>
+    /// Gets a value indicating whether the WinEventHook is currently active.
+    /// </summary>
+    public bool IsHookActive => _focusEventHook != IntPtr.Zero;
+
     public FocusMonitorService(ILogger<FocusMonitorService> logger)
     {
         _logger = logger;

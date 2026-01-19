@@ -41,4 +41,9 @@ public interface IFocusMonitorService : IHostedService
     /// Fired when the foreground window changes (application gains focus).
     /// </summary>
     event EventHandler<FocusChangeEventArgs>? FocusChanged;
+
+    /// <summary>
+    /// Gets a value indicating whether the WinEventHook is currently active.
+    /// </summary>
+    bool IsHookActive { get; }
 }
