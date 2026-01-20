@@ -1,4 +1,5 @@
 using AppTimeTracker.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace AppTimeTracker.Services.HealthMonitors;
 
@@ -77,8 +78,12 @@ public class SqliteHealthMonitor : IHealthMonitor
         {
             _logger.LogInformation("Attempting to recover SQLite connection...");
 
-            // Try to reconnect by disposing and recreating connection
-            await _dbContext.Database.CloseConnectionAsync();
+            // Try to reconnect by closing and reopening connection
+            var connection = _dbContext.Database.GetDbConnection();
+            if (connection.State == System.Data.ConnectionState.Open)
+            {
+                await connection.CloseAsync();
+            }
             await Task.Delay(100, cancellationToken);
 
             var canConnect = await _dbContext.Database.CanConnectAsync(cancellationToken);
