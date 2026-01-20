@@ -12,6 +12,9 @@
     <PublishTrimmed>False</PublishTrimmed>
     <PublishAot>False</PublishAot>
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <AppendPlatformToOutputPath>true</AppendPlatformToOutputPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
