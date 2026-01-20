@@ -39,7 +39,7 @@ param(
 # Service configuration
 $ServiceName = "AppTimeTracker"
 $ServiceDisplayName = "App Time Tracker"
-$ServiceDescription = "Monitors application usage time by tracking foreground window focus."
+$ServiceDescription = "Monitors and tracks application usage time by detecting foreground window focus changes and Windows session events. Stores usage data in a local SQLite database."
 $ProgramDataPath = Join-Path $env:ProgramData "AppTimeTracker"
 
 function Write-Step {
