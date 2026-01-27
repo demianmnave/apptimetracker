@@ -29,11 +29,11 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [string]$ServicePath = (Join-Path $PSScriptRoot "..\src\bin\Release\net8.0\win-x64\publish\AppTimeTracker.exe"),
+    [string]$ServicePath = (Join-Path $PSScriptRoot "..\src\bin\win-x64\publish\AppTimeTracker.exe"),
 
     [Parameter()]
-    [ValidateSet("LocalSystem", "LocalService", "NetworkService")]
-    [string]$ServiceAccount = "LocalSystem"
+    [ValidateSet("LocalService")]
+    [string]$ServiceAccount = "LocalService"
 )
 
 # Service configuration
