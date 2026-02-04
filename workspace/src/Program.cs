@@ -96,6 +96,9 @@ try
     builder.Services.AddSingleton<TelemetryService>();
     builder.Services.AddSingleton<PersistenceService>();
 
+    // Register reporting services
+    builder.Services.AddScoped<IDailyReportService, DailyReportService>();
+
     // Register logging and health services
     builder.Services.AddSingleton<ILoggingService, LoggingService>();
     builder.Services.AddSingleton<IRecoveryManager, RecoveryManager>();
