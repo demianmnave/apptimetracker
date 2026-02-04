@@ -1,264 +1,273 @@
-#Requires -RunAsAdministrator
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Installs the AppTimeTracker Windows Service.
-
+    Installs the AppTimeTracker Windows Service with elevated privileges validation
 .DESCRIPTION
-    This script installs and configures the AppTimeTracker Windows Service with:
-    - Automatic startup configuration
-    - Recovery options (restart on failure)
-    - ProgramData directory with appropriate permissions
-
+    Installs AppTimeTracker as a Windows Service with proper dependency checks,
+    service registration, and startup validation.
 .PARAMETER ServicePath
-    Path to the AppTimeTracker.exe executable. Defaults to current directory.
-
-.PARAMETER ServiceAccount
-    The account to run the service under. Defaults to LocalSystem.
-    Options: LocalSystem, LocalService, NetworkService, or a domain\user account.
-
+    Path to the AppTimeTracker.exe executable (defaults to script directory parent\src\worker\bin\Release\net8.0-windows\AppTimeTracker.exe)
+.PARAMETER ServiceName
+    Name to register the service as (default: AppTimeTracker)
+.PARAMETER StartupType
+    Service startup type: Automatic, Manual, or Disabled (default: Automatic)
 .EXAMPLE
     .\Install-Service.ps1
-
-.EXAMPLE
-    .\Install-Service.ps1 -ServicePath "C:\Services\AppTimeTracker\AppTimeTracker.exe"
-
-.NOTES
-    Requires Administrator privileges to install Windows Services.
+    .\Install-Service.ps1 -ServicePath "C:\Program Files\AppTimeTracker\AppTimeTracker.exe"
+    .\Install-Service.ps1 -StartupType Manual
 #>
 
-[CmdletBinding()]
 param(
-    [Parameter()]
-    [string]$ServicePath = (Join-Path $PSScriptRoot "..\src\bin\Release\net8.0\win-x64\publish\AppTimeTracker.exe"),
-
-    [Parameter()]
-    [ValidateSet("LocalSystem", "LocalService", "NetworkService")]
-    [string]$ServiceAccount = "LocalSystem"
+    [string]$ServicePath = (Join-Path (Split-Path $PSScriptRoot -Parent) "src\worker\bin\Release\net8.0-windows\AppTimeTracker.exe"),
+    [string]$ServiceName = "AppTimeTracker",
+    [ValidateSet("Automatic", "Manual", "Disabled")]
+    [string]$StartupType = "Automatic"
 )
 
-# Service configuration
-$ServiceName = "AppTimeTracker"
-$ServiceDisplayName = "App Time Tracker"
-$ServiceDescription = "Monitors application usage time by tracking foreground window focus."
-$ProgramDataPath = Join-Path $env:ProgramData "AppTimeTracker"
+# Configuration
+$ServiceDisplayName = "AppTimeTracker Session Monitor"
+$ServiceDescription = "Monitors application usage and session states for AppTimeTracker"
 
-function Write-Step {
-    param([string]$Message)
-    Write-Host "[*] $Message" -ForegroundColor Cyan
+function Test-Administrator {
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Write-Success {
-    param([string]$Message)
-    Write-Host "[+] $Message" -ForegroundColor Green
+function Write-Status {
+    param([string]$Message, [string]$Type = "Info")
+    
+    $colors = @{
+        Info    = "Cyan"
+        Success = "Green"
+        Warning = "Yellow"
+        Error   = "Red"
+    }
+    
+    $symbol = @{
+        Info    = "ℹ️ "
+        Success = "✅"
+        Warning = "⚠️ "
+        Error   = "❌"
+    }
+    
+    Write-Host "$($symbol[$Type]) $Message" -ForegroundColor $colors[$Type]
 }
 
-function Write-Error {
-    param([string]$Message)
-    Write-Host "[-] $Message" -ForegroundColor Red
+function Test-Dependencies {
+    Write-Host "`n--- Checking Dependencies ---`n"
+    
+    # Check if .NET 8 is installed
+    $dotnetVersion = dotnet --version 2>$null
+    if (-not $dotnetVersion) {
+        Write-Status ".NET SDK not found. Please install .NET 8 or later." "Error"
+        return $false
+    }
+    
+    Write-Status ".NET version: $dotnetVersion" "Success"
+    
+    # Check if service executable exists
+    if (-not (Test-Path $ServicePath)) {
+        Write-Status "Service executable not found at: $ServicePath" "Error"
+        Write-Status "Please build the project first: cd src/worker && dotnet publish -c Release" "Info"
+        return $false
+    }
+    
+    Write-Status "Service executable found: $ServicePath" "Success"
+    return $true
 }
 
-function Write-Warning {
-    param([string]$Message)
-    Write-Host "[!] $Message" -ForegroundColor Yellow
+function Install-WindowsService {
+    Write-Host "`n--- Installing Windows Service ---`n"
+    
+    # Check if service already exists
+    $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    
+    if ($existingService) {
+        Write-Status "Service '$ServiceName' already exists. Removing existing service..." "Warning"
+        
+        # Stop the service if running
+        if ($existingService.Status -eq "Running") {
+            Write-Status "Stopping service..." "Info"
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
+        
+        # Remove the service
+        sc.exe delete $ServiceName | Out-Null
+        Start-Sleep -Milliseconds 1000
+        Write-Status "Existing service removed" "Success"
+    }
+    
+    # Create the service
+    try {
+        Write-Status "Creating service: $ServiceName" "Info"
+        
+        # Resolve full path
+        $fullPath = Resolve-Path $ServicePath
+        
+        # Create service using sc.exe
+        $output = sc.exe create $ServiceName `
+            binPath= $fullPath `
+            DisplayName= $ServiceDisplayName `
+            start= $StartupType `
+            type= own `
+            error= ignore
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "Failed to create service. Exit code: $LASTEXITCODE" "Error"
+            Write-Status "Output: $output" "Error"
+            return $false
+        }
+        
+        Write-Status "Service created successfully" "Success"
+        
+        # Set service description
+        try {
+            sc.exe description $ServiceName $ServiceDescription | Out-Null
+            Write-Status "Service description set" "Success"
+        }
+        catch {
+            Write-Status "Warning: Could not set service description: $_" "Warning"
+        }
+        
+        # Set failure actions (restart on failure)
+        try {
+            sc.exe failure $ServiceName reset= 60 actions= restart/5000 | Out-Null
+            Write-Status "Failure recovery configured (restart on failure)" "Success"
+        }
+        catch {
+            Write-Status "Warning: Could not configure failure actions: $_" "Warning"
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Status "Error creating service: $_" "Error"
+        return $false
+    }
 }
 
-# Check if running as Administrator
-$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Error "This script must be run as Administrator."
-    Write-Host "Please right-click PowerShell and select 'Run as Administrator'."
+function Verify-ServiceInstallation {
+    Write-Host "`n--- Verifying Service Installation ---`n"
+    
+    # Check if service was created
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    
+    if (-not $service) {
+        Write-Status "Service verification failed: Service not found in registry" "Error"
+        return $false
+    }
+    
+    Write-Status "Service registered: $($service.Name)" "Success"
+    Write-Status "Display Name: $($service.DisplayName)" "Info"
+    Write-Status "Status: $($service.Status)" "Info"
+    Write-Status "Start Type: $($service.StartType)" "Info"
+    
+    return $true
+}
+
+function Start-ServiceValidation {
+    Write-Host "`n--- Starting Service Validation ---`n"
+    
+    try {
+        Write-Status "Starting service..." "Info"
+        Start-Service -Name $ServiceName -ErrorAction Stop
+        
+        # Wait for service to start
+        $timeout = 0
+        $maxWait = 30
+        
+        while ($timeout -lt $maxWait) {
+            $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -eq "Running") {
+                Write-Status "Service started successfully" "Success"
+                return $true
+            }
+            Start-Sleep -Seconds 1
+            $timeout++
+        }
+        
+        Write-Status "Service failed to start within timeout period" "Warning"
+        
+        # Try to get more details
+        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        Write-Status "Current service status: $($svc.Status)" "Info"
+        
+        return $false
+    }
+    catch {
+        Write-Status "Error starting service: $_" "Error"
+        return $false
+    }
+}
+
+function Show-Summary {
+    param([bool]$Success)
+    
+    Write-Host "`n" + ("=" * 60)
+    
+    if ($Success) {
+        Write-Status "Service installed successfully!" "Success"
+        Write-Host "`nℹ️  Service Information:"
+        Write-Host "  • Service Name: $ServiceName"
+        Write-Host "  • Display Name: $ServiceDisplayName"
+        Write-Host "  • Executable: $ServicePath"
+        Write-Host "  • Start Type: $StartupType"
+        Write-Host "`nℹ️  Next Steps:"
+        Write-Host "  • View service status: Get-Service -Name $ServiceName"
+        Write-Host "  • View service logs: Get-EventLog -LogName Application -Source AppTimeTracker -Newest 10"
+        Write-Host "  • Manually start: Start-Service -Name $ServiceName"
+        Write-Host "  • Manually stop: Stop-Service -Name $ServiceName"
+        Write-Host "  • Uninstall: .\Uninstall-Service.ps1"
+    }
+    else {
+        Write-Status "Service installation encountered issues. Please review the errors above." "Error"
+        Write-Host "`nℹ️  Troubleshooting:"
+        Write-Host "  • Ensure you have Administrator privileges"
+        Write-Host "  • Check that the executable path is correct"
+        Write-Host "  • Review Windows Event Log for service startup errors"
+        Write-Host "  • Run: dotnet build -c Release in src/worker directory"
+    }
+    
+    Write-Host ("=" * 60) "`n"
+}
+
+# Main execution
+Write-Host "`n╔═══════════════════════════════════════════════════════════╗"
+Write-Host "║     AppTimeTracker Windows Service Installer               ║"
+Write-Host "╚═══════════════════════════════════════════════════════════╝`n"
+
+# Verify admin privileges
+if (-not (Test-Administrator)) {
+    Write-Status "This script requires Administrator privileges!" "Error"
+    Write-Status "Please run PowerShell as Administrator and try again." "Info"
     exit 1
 }
 
-Write-Host ""
-Write-Host "========================================" -ForegroundColor White
-Write-Host "  AppTimeTracker Service Installer" -ForegroundColor White
-Write-Host "========================================" -ForegroundColor White
-Write-Host ""
+Write-Status "Running with Administrator privileges" "Success"
 
-# Validate .NET 8 Runtime
-Write-Step "Checking .NET 8 Runtime..."
-try {
-    $dotnetInfo = & dotnet --list-runtimes 2>&1
-    if ($dotnetInfo -match "Microsoft\.NETCore\.App 8\.") {
-        Write-Success ".NET 8 Runtime is installed."
-    } else {
-        Write-Warning ".NET 8 Runtime not detected. The service may not start correctly."
-        Write-Host "    Download from: https://dotnet.microsoft.com/download/dotnet/8.0"
-    }
-} catch {
-    Write-Warning "Could not verify .NET 8 Runtime. Ensure it is installed."
-}
-
-# Validate service executable exists
-Write-Step "Validating service executable..."
-if (-not (Test-Path $ServicePath)) {
-    # Try alternative path in current directory
-    $altPath = Join-Path $PSScriptRoot "AppTimeTracker.exe"
-    if (Test-Path $altPath) {
-        $ServicePath = $altPath
-    } else {
-        Write-Error "Service executable not found at: $ServicePath"
-        Write-Host "    Please build the project first:"
-        Write-Host "    dotnet publish -c Release -r win-x64 --self-contained false"
-        exit 1
-    }
-}
-Write-Success "Found service executable: $ServicePath"
-
-# Check if service already exists
-Write-Step "Checking for existing service..."
-$existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($existingService) {
-    Write-Warning "Service '$ServiceName' already exists."
-    $response = Read-Host "Do you want to reinstall? (Y/N)"
-    if ($response -eq "Y" -or $response -eq "y") {
-        Write-Step "Stopping existing service..."
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-
-        Write-Step "Removing existing service..."
-        & sc.exe delete $ServiceName | Out-Null
-        Start-Sleep -Seconds 2
-    } else {
-        Write-Host "Installation cancelled."
-        exit 0
-    }
-}
-
-# Create ProgramData directory with proper permissions
-Write-Step "Creating ProgramData directory..."
-if (-not (Test-Path $ProgramDataPath)) {
-    New-Item -ItemType Directory -Path $ProgramDataPath -Force | Out-Null
-}
-
-# Create subdirectories
-$LogsPath = Join-Path $ProgramDataPath "Logs"
-if (-not (Test-Path $LogsPath)) {
-    New-Item -ItemType Directory -Path $LogsPath -Force | Out-Null
-}
-Write-Success "Created directory: $ProgramDataPath"
-
-# Set directory permissions
-Write-Step "Configuring directory permissions..."
-try {
-    $acl = Get-Acl $ProgramDataPath
-
-    # Add SYSTEM full control
-    $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "NT AUTHORITY\SYSTEM",
-        "FullControl",
-        "ContainerInherit,ObjectInherit",
-        "None",
-        "Allow"
-    )
-    $acl.AddAccessRule($systemRule)
-
-    # Add Administrators full control
-    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "BUILTIN\Administrators",
-        "FullControl",
-        "ContainerInherit,ObjectInherit",
-        "None",
-        "Allow"
-    )
-    $acl.AddAccessRule($adminRule)
-
-    # Add Users read access (for viewing logs)
-    $usersRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "BUILTIN\Users",
-        "ReadAndExecute",
-        "ContainerInherit,ObjectInherit",
-        "None",
-        "Allow"
-    )
-    $acl.AddAccessRule($usersRule)
-
-    Set-Acl -Path $ProgramDataPath -AclObject $acl
-    Write-Success "Directory permissions configured."
-} catch {
-    Write-Warning "Could not set directory permissions: $_"
-}
-
-# Create the Windows Service
-Write-Step "Creating Windows Service..."
-$binPath = "`"$ServicePath`""
-
-# Map service account to sc.exe format
-$scAccount = switch ($ServiceAccount) {
-    "LocalSystem" { "LocalSystem" }
-    "LocalService" { "NT AUTHORITY\LocalService" }
-    "NetworkService" { "NT AUTHORITY\NetworkService" }
-    default { $ServiceAccount }
-}
-
-# Create service using sc.exe
-$result = & sc.exe create $ServiceName binPath= $binPath start= auto obj= $scAccount DisplayName= $ServiceDisplayName
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to create service: $result"
+# Test dependencies
+if (-not (Test-Dependencies)) {
+    Show-Summary $false
     exit 1
 }
-Write-Success "Service created successfully."
 
-# Set service description
-Write-Step "Setting service description..."
-& sc.exe description $ServiceName $ServiceDescription | Out-Null
-
-# Configure recovery options
-Write-Step "Configuring recovery options..."
-# Recovery: First failure - restart after 5 seconds
-#           Second failure - restart after 10 seconds
-#           Subsequent failures - restart after 60 seconds
-# Reset failure count after 86400 seconds (24 hours)
-& sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/60000 | Out-Null
-Write-Success "Recovery options configured (restart on failure)."
-
-# Register EventLog source
-Write-Step "Registering EventLog source..."
-try {
-    if (-not [System.Diagnostics.EventLog]::SourceExists($ServiceName)) {
-        [System.Diagnostics.EventLog]::CreateEventSource($ServiceName, "Application")
-        Write-Success "EventLog source registered."
-    } else {
-        Write-Success "EventLog source already exists."
-    }
-} catch {
-    Write-Warning "Could not register EventLog source: $_"
-    Write-Host "    The service will still work, but EventLog may not show proper source names."
+# Install service
+if (-not (Install-WindowsService)) {
+    Show-Summary $false
+    exit 1
 }
 
-# Start the service
-Write-Step "Starting service..."
-try {
-    Start-Service -Name $ServiceName
-    Start-Sleep -Seconds 2
-
-    $service = Get-Service -Name $ServiceName
-    if ($service.Status -eq "Running") {
-        Write-Success "Service started successfully!"
-    } else {
-        Write-Warning "Service is not running. Status: $($service.Status)"
-        Write-Host "    Check the EventLog for errors."
-    }
-} catch {
-    Write-Warning "Could not start service: $_"
-    Write-Host "    You can start it manually: Start-Service -Name $ServiceName"
+# Verify installation
+if (-not (Verify-ServiceInstallation)) {
+    Show-Summary $false
+    exit 1
 }
 
-Write-Host ""
-Write-Host "========================================" -ForegroundColor White
-Write-Host "  Installation Complete" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor White
-Write-Host ""
-Write-Host "Service Name:     $ServiceName"
-Write-Host "Display Name:     $ServiceDisplayName"
-Write-Host "Executable:       $ServicePath"
-Write-Host "Data Directory:   $ProgramDataPath"
-Write-Host "Log Directory:    $LogsPath"
-Write-Host ""
-Write-Host "Useful commands:" -ForegroundColor Yellow
-Write-Host "  Start service:   Start-Service -Name $ServiceName"
-Write-Host "  Stop service:    Stop-Service -Name $ServiceName"
-Write-Host "  Service status:  Get-Service -Name $ServiceName"
-Write-Host "  View logs:       Get-EventLog -LogName Application -Source $ServiceName -Newest 20"
-Write-Host ""
+# Validate startup
+Start-ServiceValidation | Out-Null
+
+# Show summary
+Show-Summary $true
+exit 0
