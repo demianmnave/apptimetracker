@@ -34,6 +34,23 @@ This technical review consists of four comprehensive documents providing differe
 
 ---
 
+### 5. **REVISED_REMEDIATION_ROADMAP.md** (OPTIMIZED TIMELINE)
+**Purpose**: Phase-by-phase remediation with query optimization deferred to Phase 3  
+**Revised Timeline**: 5-6 calendar days (from 4-5 days)  
+**Key Contents**:
+- Phase 1: Code quality and configuration (1 day, 4-6 hours)
+- Phase 2: Unit test implementation (1.5-2 days, 8-10 hours)
+- **Phase 3: Query optimization (dedicated, 1-1.5 days, 4-6 hours)**
+- Phase 4: Staging validation (1-1.5 days, 4-6 hours)
+- Phase 5: Production deployment (0.5 day, 2-4 hours)
+- Critical path: Phase 2 → Phase 3 → Phase 4 (sequential)
+- Phase 1 tasks run in parallel (5 independent tasks)
+- Milestone 5 can start after Phase 2 completion
+
+**Key Takeaway**: Test-driven approach with query optimization in dedicated phase after test infrastructure established.
+
+---
+
 ## Critical Findings Summary
 
 ### 🔴 CRITICAL ISSUES (Must Fix Before Production)
@@ -77,22 +94,32 @@ This technical review consists of four comprehensive documents providing differe
 
 ---
 
-## Remediation Timeline
+## Remediation Timeline (Revised)
 
-**Total**: 4-5 days to production readiness
+**Total**: 5-6 days to production readiness
 
-- Phase 1 - Critical Issues: 2 days (10-14 hours)
-- Phase 2 - Important Issues: 1 day (1-2 hours)
-- Phase 3 - Staging Validation: 1 day (4-6 hours)
-- Phase 4 - Production Deployment: 1 day
+**Phase 1** - Code Quality & Configuration: 1 day (4-6 hours, 5 tasks in parallel)
+**Phase 2** - Unit Tests: 1.5-2 days (8-10 hours, 57 test cases)
+**Phase 3** - Query Optimization: 1-1.5 days (4-6 hours, database-side aggregation)
+**Phase 4** - Staging Validation: 1-1.5 days (4-6 hours, load testing & benchmarking)
+**Phase 5** - Production Deployment: 0.5 day (2-4 hours, final deployment)
+
+**Critical Path**: Phase 2 → Phase 3 → Phase 4 (sequential)
+**Parallel Opportunity**: Phase 1 tasks (code quality, config, index, validation)
 
 ---
 
-## Resource Requirements
+## Resource Requirements (Revised)
 
-- 2-3 senior developers
-- 1 QA engineer
-- Total: 17-24 developer-hours, 4-5 calendar days
+- 2-3 senior developers (full-time for phases)
+- 1 QA engineer (part-time Phase 2-4, full-time Phase 4)
+- 1 DevOps engineer (part-time Phase 5)
+- Total: 22-32 developer-hours, 5-6 calendar days
+- Day 1: 3 developers (Phase 1 parallel + Phase 2 start)
+- Days 2-2.5: 2 developers (Phase 2 continuation)
+- Days 2.5-4: 2 developers (Phase 3)
+- Days 4-5.5: 2 people (1 QA + 1 developer, Phase 4)
+- Day 5.5-6: 2 people (1 DevOps + 1 developer, Phase 5)
 
 ---
 
