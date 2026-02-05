@@ -59,6 +59,10 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => new { e.SessionDate, e.UserId })
                 .HasDatabaseName("IX_Sessions_Date_User");
 
+            // Composite index for aggregation queries (GROUP BY ProcessName within date range)
+            entity.HasIndex(e => new { e.SessionDate, e.ProcessName })
+                .HasDatabaseName("IX_Sessions_Date_Process");
+
             // Property configurations
             entity.Property(e => e.ProcessName)
                 .IsRequired()

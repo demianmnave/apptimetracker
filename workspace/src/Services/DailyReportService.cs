@@ -51,7 +51,7 @@ public class DailyUsageReportDto
     /// </summary>
     public string FormattedTotalUsage
     {
-        get => FormatDuration(TotalUsageSeconds);
+        get => DurationFormatter.Format(TotalUsageSeconds);
     }
 
     /// <summary>
@@ -59,30 +59,7 @@ public class DailyUsageReportDto
     /// </summary>
     public string FormattedAverageSessionDuration
     {
-        get => FormatDuration(AverageSessionDurationSeconds);
-    }
-
-    /// <summary>
-    /// Formats duration in seconds to human-readable format (e.g., "2h 30m 45s").
-    /// </summary>
-    private static string FormatDuration(long seconds)
-    {
-        var hours = seconds / 3600;
-        var minutes = (seconds % 3600) / 60;
-        var secs = seconds % 60;
-
-        if (hours > 0)
-        {
-            return $"{hours}h {minutes}m {secs}s";
-        }
-        else if (minutes > 0)
-        {
-            return $"{minutes}m {secs}s";
-        }
-        else
-        {
-            return $"{secs}s";
-        }
+        get => DurationFormatter.Format(AverageSessionDurationSeconds);
     }
 }
 
@@ -116,30 +93,7 @@ public class ProcessUsageDto
     /// </summary>
     public string FormattedDuration
     {
-        get => FormatDuration(DurationSeconds);
-    }
-
-    /// <summary>
-    /// Formats duration in seconds to human-readable format.
-    /// </summary>
-    private static string FormatDuration(long seconds)
-    {
-        var hours = seconds / 3600;
-        var minutes = (seconds % 3600) / 60;
-        var secs = seconds % 60;
-
-        if (hours > 0)
-        {
-            return $"{hours}h {minutes}m {secs}s";
-        }
-        else if (minutes > 0)
-        {
-            return $"{minutes}m {secs}s";
-        }
-        else
-        {
-            return $"{secs}s";
-        }
+        get => DurationFormatter.Format(DurationSeconds);
     }
 }
 
@@ -333,6 +287,13 @@ public class DailyReportService : IDailyReportService
     /// <summary>
     /// Gets top N applications by usage time for a date range.
     /// </summary>
+    /// <param name="startDate">Start date (inclusive).</param>
+    /// <param name="endDate">End date (inclusive).</param>
+    /// <param name="userId">User ID to filter results.</param>
+    /// <param name="topCount">Number of top applications to return (must be > 0, default: 10).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of top applications sorted by usage time (descending).</returns>
+    /// <exception cref="ArgumentException">Thrown when topCount is less than or equal to 0.</exception>
     public async Task<List<ProcessUsageDto>> GetTopApplicationsAsync(
         DateOnly startDate,
         DateOnly endDate,
@@ -340,6 +301,12 @@ public class DailyReportService : IDailyReportService
         int topCount = 10,
         CancellationToken cancellationToken = default)
     {
+        // Validate topCount parameter
+        if (topCount <= 0)
+        {
+            throw new ArgumentException("Top count must be greater than 0.", nameof(topCount));
+        }
+
         try
         {
             _logger.LogInformation(
