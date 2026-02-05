@@ -1,0 +1,106 @@
+name: Test & Code Coverage
+
+on:
+  push:
+    branches: [ predev, main ]
+  pull_request:
+    branches: [ predev, main ]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        dotnet-version: [ '8.0.x' ]
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ matrix.dotnet-version }}
+
+    - name: Restore dependencies
+      run: dotnet restore
+      working-directory: ./workspace
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+      working-directory: ./workspace
+
+    - name: Run tests with coverage
+      run: |
+        dotnet test `
+          --configuration Release `
+          --no-build `
+          --verbosity normal `
+          --logger "console;verbosity=normal" `
+          --collect:"XPlat Code Coverage" `
+          --settings tests/.runsettings `
+          /p:CoverletOutputFormat=opencover,cobertura
+      working-directory: ./workspace
+
+    - name: Generate coverage report
+      if: always()
+      run: |
+        dotnet tool install -g dotnet-reportgenerator-globaltool
+        reportgenerator `
+          -reports:"**/coverage.cobertura.xml" `
+          -targetdir:"./coverage-report" `
+          -reporttypes:"Html;HtmlSummary"
+      working-directory: ./workspace
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./workspace/coverage.cobertura.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+        verbose: true
+
+    - name: Check coverage threshold
+      if: always()
+      run: |
+        $coverageFile = Get-Item "workspace\*\*\coverage.cobertura.xml" -Recurse | Select-Object -First 1
+        if ($null -eq $coverageFile) {
+          Write-Host "Coverage file not found"
+          exit 1
+        }
+        [xml]$coverage = Get-Content $coverageFile.FullName
+        $lineCoverage = [double]$coverage.coverage.'line-rate'
+        $coveragePercent = [math]::Round($lineCoverage * 100, 2)
+        
+        Write-Host "Code Coverage: ${coveragePercent}%"
+        
+        if ($coveragePercent -lt 70) {
+          Write-Host "ERROR: Code coverage ${coveragePercent}% is below the required 70% threshold"
+          exit 1
+        }
+        
+        Write-Host "SUCCESS: Code coverage ${coveragePercent}% meets the 70% threshold requirement"
+        exit 0
+
+    - name: Archive coverage report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: ./workspace/coverage-report/
+
+    - name: Archive test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: ./workspace/tests/TestResults/
+
+    - name: Publish test results
+      if: always()
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      with:
+        files: ./workspace/tests/TestResults/**/*.trx
+        check_name: Test Results

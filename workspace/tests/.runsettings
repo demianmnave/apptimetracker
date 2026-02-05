@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!-- Code Coverage Configuration -->
+  <CodeCoverage>
+    <!-- Coverage threshold: minimum 70% -->
+    <Threshold value="70" />
+    
+    <!-- Module-specific settings -->
+    <ModulePaths>
+      <ModulePath>.*AppTimeTracker\.dll$</ModulePath>
+    </ModulePaths>
+    
+    <!-- Functions to exclude from coverage -->
+    <Functions>
+      <Exclude>
+        <Function>^AppTimeTracker\.Program.*</Function>
+        <Function>^AppTimeTracker\.Worker\.ExecuteAsync.*</Function>
+      </Exclude>
+    </Functions>
+    
+    <!-- Attributes to exclude -->
+    <Attributes>
+      <Exclude>
+        <Attribute>^System\.Diagnostics\.CodeAnalysis\.ExcludeFromCodeCoverageAttribute$</Attribute>
+      </Exclude>
+    </Attributes>
+  </CodeCoverage>
+
+  <!-- Coverlet Configuration (via environment variables) -->
+  <RunConfiguration>
+    <!-- Use Coverlet collector for coverage -->
+    <DataCollectionRunSettings>
+      <DataCollectors>
+        <DataCollector friendlyName="XPlat Code Coverage" uri="datacollector://Microsoft/CodeCoverage/2.0" assemblyQualifiedName="Coverlet.Collector.DataCollection.CoverletRunSettings, coverlet.collector">
+          <Configuration>
+            <!-- Report formats: opencover, json, cobertura, lcov -->
+            <Format>opencover,cobertura</Format>
+            <!-- Include filter: include AppTimeTracker namespace -->
+            <Include>[AppTimeTracker]*</Include>
+            <!-- Exclude filters -->
+            <Exclude>[AppTimeTracker.Tests]*,[AppTimeTracker]AppTimeTracker.Program</Exclude>
+            <!-- Exclude internal types -->
+            <ExcludeByAttribute>ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+            <!-- Generate coverage report -->
+            <UseSourceLink>true</UseSourceLink>
+            <!-- Coverage output directory -->
+            <CoverletOutputDirectory>../../../coverage</CoverletOutputDirectory>
+          </Configuration>
+        </DataCollector>
+      </DataCollectors>
+    </DataCollectionRunSettings>
+  </RunConfiguration>
+</RunSettings>
