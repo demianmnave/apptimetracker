@@ -6,6 +6,7 @@ namespace AppTimeTracker.Data;
 /// <summary>
 /// Repository for app usage session data with atomic transaction support.
 /// Handles CRUD operations and aggregation queries for usage tracking data.
+/// EF Core implicitly wraps SaveChanges operations in transactions for atomicity.
 /// </summary>
 public class UsageRepository : IUsageRepository
 {
@@ -20,16 +21,14 @@ public class UsageRepository : IUsageRepository
 
     /// <summary>
     /// Saves a new app usage session to the database with atomic transaction.
+    /// EF Core implicitly wraps the SaveChanges operation in a transaction.
     /// </summary>
     public async Task<AppUsageSession> SaveSessionAsync(AppUsageSession session, CancellationToken cancellationToken = default)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-
         try
         {
             _context.AppUsageSessions.Add(session);
             await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
 
             _logger.LogDebug(
                 "Saved session for {ProcessName}, Duration: {Duration}s, SessionId: {SessionId}",
@@ -41,24 +40,21 @@ public class UsageRepository : IUsageRepository
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Failed to save session for {ProcessName}, rolling back transaction", session.ProcessName);
+            _logger.LogError(ex, "Failed to save session for {ProcessName}", session.ProcessName);
             throw;
         }
     }
 
     /// <summary>
     /// Updates an existing app usage session with atomic transaction.
+    /// EF Core implicitly wraps the SaveChanges operation in a transaction.
     /// </summary>
     public async Task<AppUsageSession> UpdateSessionAsync(AppUsageSession session, CancellationToken cancellationToken = default)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-
         try
         {
             _context.AppUsageSessions.Update(session);
             await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
 
             _logger.LogDebug(
                 "Updated session for {ProcessName}, Duration: {Duration}s, SessionId: {SessionId}",
@@ -70,8 +66,7 @@ public class UsageRepository : IUsageRepository
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Failed to update session for {ProcessName}, rolling back transaction", session.ProcessName);
+            _logger.LogError(ex, "Failed to update session for {ProcessName}", session.ProcessName);
             throw;
         }
     }

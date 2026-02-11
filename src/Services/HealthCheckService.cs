@@ -1,12 +1,16 @@
 using AppTimeTracker.Configuration;
 using AppTimeTracker.Services.HealthMonitors;
+using AppTimeTracker.Data;
+using AppTimeTracker.Models;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace AppTimeTracker.Services;
 
 /// <summary>
 /// Background service that performs periodic health checks on core service components.
-/// Aggregates results from multiple health monitors and triggers recovery when needed.
+/// Aggregates results from multiple health monitors, persists results to database, and triggers recovery when needed.
 /// </summary>
 public class HealthCheckService : BackgroundService
 {
@@ -14,17 +18,25 @@ public class HealthCheckService : BackgroundService
     private readonly IServiceProvider _serviceProvider;
     private readonly HealthCheckSettings _settings;
     private readonly IRecoveryManager _recoveryManager;
+    private readonly IHealthCheckRepository? _healthCheckRepository;
+    private readonly ILoggingService? _loggingService;
+    private readonly Stopwatch _uptime;
 
     public HealthCheckService(
         ILogger<HealthCheckService> logger,
         IServiceProvider serviceProvider,
         IOptions<HealthCheckSettings> options,
-        IRecoveryManager recoveryManager)
+        IRecoveryManager recoveryManager,
+        IHealthCheckRepository? healthCheckRepository = null,
+        ILoggingService? loggingService = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _settings = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _recoveryManager = recoveryManager ?? throw new ArgumentNullException(nameof(recoveryManager));
+        _healthCheckRepository = healthCheckRepository;
+        _loggingService = loggingService;
+        _uptime = Stopwatch.StartNew();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -76,6 +88,7 @@ public class HealthCheckService : BackgroundService
 
     /// <summary>
     /// Performs a complete health check cycle across all registered monitors.
+    /// Persists results to database and triggers recovery if needed.
     /// </summary>
     private async Task PerformHealthCheckAsync(CancellationToken cancellationToken)
     {
@@ -86,6 +99,12 @@ public class HealthCheckService : BackgroundService
 
         var results = new List<HealthCheckResult>();
         var overallStatus = HealthStatus.Healthy;
+        var databaseConnected = false;
+        var hookActive = false;
+        var memoryUsageMB = 0L;
+        var pendingEventCount = 0;
+        var lastEventTime = DateTime.MinValue;
+        var recoveryTriggered = false;
 
         foreach (var monitor in monitors)
         {
@@ -95,15 +114,21 @@ public class HealthCheckService : BackgroundService
                 var result = await monitor.ProbeAsync(cancellationToken);
                 results.Add(result);
 
+                // Extract metrics from results
+                if (result.DatabaseConnected) databaseConnected = true;
+                if (result.HookActive) hookActive = true;
+                memoryUsageMB = Math.Max(memoryUsageMB, result.MemoryUsageMB);
+                pendingEventCount = Math.Max(pendingEventCount, result.PendingEventCount);
+                if (result.LastEventTime.HasValue && result.LastEventTime.Value > lastEventTime)
+                {
+                    lastEventTime = result.LastEventTime.Value;
+                }
+
                 // Update overall status (worst status wins)
                 if (result.Status > overallStatus)
                 {
                     overallStatus = result.Status;
                 }
-
-                _logger.LogInformation(
-                    "Health check result for {ComponentName}: {Status} - {Description}",
-                    result.ComponentName, result.Status, result.Description);
 
                 // Trigger recovery if component is unhealthy or degraded
                 if (result.Status != HealthStatus.Healthy)
@@ -123,6 +148,7 @@ public class HealthCheckService : BackgroundService
                     else
                     {
                         _logger.LogWarning("Recovery failed for {ComponentName}", monitor.Name);
+                        recoveryTriggered = true;
                     }
                 }
             }
@@ -143,6 +169,59 @@ public class HealthCheckService : BackgroundService
 
         // Log overall health summary
         LogHealthSummary(results, overallStatus);
+
+        // Persist health check result to database (non-blocking)
+        if (_healthCheckRepository != null)
+        {
+            try
+            {
+                var healthCheck = new HealthCheck
+                {
+                    Status = overallStatus,
+                    DatabaseConnected = databaseConnected,
+                    HookActive = hookActive,
+                    MemoryUsageMB = memoryUsageMB,
+                    PendingEventCount = pendingEventCount,
+                    LastEventTime = lastEventTime == DateTime.MinValue ? null : lastEventTime,
+                    UptimeSeconds = (long)_uptime.Elapsed.TotalSeconds,
+                    RecoveryTriggered = recoveryTriggered,
+                    Details = TrySerializeResultsToJson(results),
+                    Timestamp = DateTime.UtcNow
+                };
+
+                // Fire and forget - don't block health checks on persistence
+                _ = _healthCheckRepository.RecordHealthCheckAsync(healthCheck, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to persist health check result to database");
+            }
+        }
+
+        // Log events if health status has degraded
+        if (overallStatus != HealthStatus.Healthy && _loggingService != null)
+        {
+            var severity = overallStatus == HealthStatus.Degraded ? LogSeverity.Warning : LogSeverity.Error;
+            var details = JsonSerializer.Serialize(new
+            {
+                OverallStatus = overallStatus,
+                DatabaseConnected = databaseConnected,
+                HookActive = hookActive,
+                MemoryUsageMB = memoryUsageMB,
+                RecoveryTriggered = recoveryTriggered
+            });
+
+            _ = _loggingService.PersistLogAsync(
+                severity,
+                $"Health check failed: {overallStatus}",
+                "HealthCheckService",
+                Environment.UserName,
+                details,
+                null,
+                null,
+                null,
+                cancellationToken);
+        }
     }
 
     /// <summary>
@@ -202,6 +281,41 @@ public class HealthCheckService : BackgroundService
             _logger.LogWarning(
                 "{ComponentName} - Status: {Status}, Description: {Description}",
                 result.ComponentName, result.Status, result.Description);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to serialize health check results to JSON string.
+    /// </summary>
+    private static string? TrySerializeResultsToJson(List<HealthCheckResult> results)
+    {
+        if (results == null || results.Count == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var summary = new
+            {
+                CheckCount = results.Count,
+                Results = results.Select(r => new
+                {
+                    r.ComponentName,
+                    Status = r.Status.ToString(),
+                    r.Description,
+                    r.DatabaseConnected,
+                    r.HookActive,
+                    r.MemoryUsageMB,
+                    r.PendingEventCount
+                }).ToList()
+            };
+
+            return JsonSerializer.Serialize(summary);
+        }
+        catch
+        {
+            return null;
         }
     }
 }

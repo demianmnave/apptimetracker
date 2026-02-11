@@ -1,6 +1,8 @@
+using AppTimeTracker.Configuration;
 using AppTimeTracker.Data;
 using AppTimeTracker.Models;
 using AppTimeTracker.Services;
+using Microsoft.Extensions.Options;
 
 namespace AppTimeTracker;
 
@@ -16,6 +18,7 @@ public class Worker : BackgroundService
     private readonly ISessionMonitorService _sessionMonitor;
     private readonly IFocusMonitorService _focusMonitor;
     private readonly IConfiguration _configuration;
+    private readonly SessionTrackingSettings _sessionTrackingSettings;
 
     // Current active session being tracked (null if no app has focus)
     private AppUsageSession? _currentSession;
@@ -24,21 +27,20 @@ public class Worker : BackgroundService
     // Tracking pause state
     private bool _isTrackingPaused;
 
-    // Minimum session duration filter (1 second)
-    private const int MinSessionDurationSeconds = 1;
-
     public Worker(
         ILogger<Worker> logger,
         IServiceScopeFactory serviceScopeFactory,
         ISessionMonitorService sessionMonitor,
         IFocusMonitorService focusMonitor,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IOptions<SessionTrackingSettings> sessionTrackingSettings)
     {
         _logger = logger;
         _serviceScopeFactory = serviceScopeFactory;
         _sessionMonitor = sessionMonitor;
         _focusMonitor = focusMonitor;
         _configuration = configuration;
+        _sessionTrackingSettings = sessionTrackingSettings?.Value ?? throw new ArgumentNullException(nameof(sessionTrackingSettings));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -202,7 +204,7 @@ public class Worker : BackgroundService
             return;
         }
 
-        var pauseOnLock = _configuration.GetSection("SessionMonitoring").GetValue("PauseOnLock", true);
+        var pauseOnLock = _sessionTrackingSettings.PauseOnLock;
 
         try
         {
@@ -250,7 +252,7 @@ public class Worker : BackgroundService
     /// <summary>
     /// Handles focus changes to a new application window.
     /// Ends the previous session and starts tracking the new focused application.
-    /// Ignores focus changes shorter than 1 second.
+    /// Ignores focus changes shorter than the configured minimum duration.
     /// </summary>
     private void OnFocusChanged(object? sender, FocusChangeEventArgs? e)
     {
@@ -278,8 +280,8 @@ public class Worker : BackgroundService
                 {
                     var sessionDuration = (int)(DateTime.UtcNow - _currentSession.StartTimeUtc).TotalSeconds;
 
-                    // Only persist sessions that lasted at least 1 second
-                    if (sessionDuration >= MinSessionDurationSeconds)
+                    // Only persist sessions that meet or exceed the configured minimum duration
+                    if (sessionDuration >= _sessionTrackingSettings.MinSessionDurationSeconds)
                     {
                         _currentSession.EndTimeUtc = DateTime.UtcNow;
                         _currentSession.CalculateDuration();
@@ -293,7 +295,7 @@ public class Worker : BackgroundService
                             "Ignoring session for {ProcessName} - duration {Duration}s is less than minimum {Min}s",
                             _currentSession.ProcessName,
                             sessionDuration,
-                            MinSessionDurationSeconds);
+                            _sessionTrackingSettings.MinSessionDurationSeconds);
                     }
                 }
 

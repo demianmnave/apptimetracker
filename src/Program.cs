@@ -86,8 +86,18 @@ try
     builder.Services.AddSingleton<ISessionMonitorService, SessionMonitorService>();
     builder.Services.AddSingleton<IFocusMonitorService, FocusMonitorService>();
 
-    // Register data repository
+    // Register data repositories
     builder.Services.AddScoped<IUsageRepository, UsageRepository>();
+    builder.Services.AddScoped<FocusEventRepository>();
+    builder.Services.AddScoped<IAppLogRepository, AppLogRepository>();
+    builder.Services.AddScoped<IHealthCheckRepository, HealthCheckRepository>();
+
+    // Register telemetry and persistence services
+    builder.Services.AddSingleton<TelemetryService>();
+    builder.Services.AddSingleton<PersistenceService>();
+
+    // Register reporting services
+    builder.Services.AddScoped<IDailyReportService, DailyReportService>();
 
     // Register logging and health services
     builder.Services.AddSingleton<ILoggingService, LoggingService>();
@@ -131,6 +141,13 @@ try
     }
 
     var host = builder.Build();
+
+    // Initialize LoggingService to start background persistence queue
+    var loggingService = host.Services.GetRequiredService<ILoggingService>();
+    if (loggingService is LoggingService ls)
+    {
+        ls.Initialize();
+    }
 
     // Log startup information with version
     var version = Assembly.GetExecutingAssembly().GetName().Version;
