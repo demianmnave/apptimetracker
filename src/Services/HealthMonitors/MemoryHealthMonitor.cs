@@ -77,7 +77,7 @@ public class MemoryHealthMonitor : IHealthMonitor
     /// </summary>
     public async Task<bool> TryRecoverAsync(CancellationToken cancellationToken)
     {
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
             try
             {

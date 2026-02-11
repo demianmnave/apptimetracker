@@ -207,7 +207,7 @@ public class Worker : BackgroundService
         try
         {
             _logger.LogDebug("Session state changed for user {UserId}: {OldState} -> {NewState}",
-                e.UserId, e.PreviousState, e.NewState);
+                e.UserId, e.OldState, e.NewState);
             switch (e.NewState)
             {
                 case SessionState.Active when _isTrackingPaused:

@@ -1,207 +1,193 @@
-#!/usr/bin/env pwsh
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Uninstalls the AppTimeTracker Windows Service
+    Uninstalls the AppTimeTracker Windows Service.
+
 .DESCRIPTION
-    Safely uninstalls the AppTimeTracker Windows Service, stops it if running,
-    and cleans up service registration.
-.PARAMETER ServiceName
-    Name of the service to uninstall (default: AppTimeTracker)
+    This script stops and removes the AppTimeTracker Windows Service.
+    Optionally removes the ProgramData directory containing logs and database.
+
+.PARAMETER RemoveData
+    If specified, removes the ProgramData\AppTimeTracker directory
+    containing the database and log files.
+
 .PARAMETER Force
-    Force uninstall without confirmation (default: $false)
+    If specified, skips confirmation prompts.
+
 .EXAMPLE
     .\Uninstall-Service.ps1
-    .\Uninstall-Service.ps1 -Force
-    .\Uninstall-Service.ps1 -ServiceName "AppTimeTracker" -Force
+
+.EXAMPLE
+    .\Uninstall-Service.ps1 -RemoveData
+
+.EXAMPLE
+    .\Uninstall-Service.ps1 -RemoveData -Force
+
+.NOTES
+    Requires Administrator privileges to uninstall Windows Services.
 #>
 
+[CmdletBinding()]
 param(
-    [string]$ServiceName = "AppTimeTracker",
+    [Parameter()]
+    [switch]$RemoveData,
+
+    [Parameter()]
     [switch]$Force
 )
 
-function Test-Administrator {
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# Service configuration
+$ServiceName = "AppTimeTracker"
+$ProgramDataPath = Join-Path $env:ProgramData "AppTimeTracker"
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host "[*] $Message" -ForegroundColor Cyan
 }
 
-function Write-Status {
-    param([string]$Message, [string]$Type = "Info")
-    
-    $colors = @{
-        Info    = "Cyan"
-        Success = "Green"
-        Warning = "Yellow"
-        Error   = "Red"
-    }
-    
-    $symbol = @{
-        Info    = "ℹ️ "
-        Success = "✅"
-        Warning = "⚠️ "
-        Error   = "❌"
-    }
-    
-    Write-Host "$($symbol[$Type]) $Message" -ForegroundColor $colors[$Type]
+function Write-Success {
+    param([string]$Message)
+    Write-Host "[+] $Message" -ForegroundColor Green
 }
 
-function Confirm-Uninstall {
-    Write-Host "`n⚠️  WARNING: You are about to uninstall the $ServiceName service.`n"
-    
-    $response = Read-Host "Are you sure you want to continue? (yes/no)"
-    
-    return ($response -eq "yes")
+function Write-Error {
+    param([string]$Message)
+    Write-Host "[-] $Message" -ForegroundColor Red
 }
 
-function Stop-ServiceIfRunning {
-    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    
-    if (-not $service) {
-        Write-Status "Service not found" "Warning"
-        return $true
-    }
-    
-    if ($service.Status -eq "Running") {
-        Write-Status "Service is running. Stopping service..." "Info"
-        
-        try {
-            Stop-Service -Name $ServiceName -Force -ErrorAction Stop
-            
-            # Wait for service to stop
-            $timeout = 0
-            $maxWait = 30
-            
-            while ($timeout -lt $maxWait) {
-                $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-                if ($svc.Status -eq "Stopped") {
-                    Write-Status "Service stopped successfully" "Success"
-                    return $true
-                }
-                Start-Sleep -Seconds 1
-                $timeout++
-            }
-            
-            Write-Status "Service did not stop within timeout. Continuing uninstall..." "Warning"
-            return $true
-        }
-        catch {
-            Write-Status "Error stopping service: $_" "Warning"
-            return $true
-        }
-    }
-    
-    Write-Status "Service is already stopped" "Info"
-    return $true
+function Write-Warning {
+    param([string]$Message)
+    Write-Host "[!] $Message" -ForegroundColor Yellow
 }
 
-function Remove-WindowsService {
-    Write-Host "`n--- Removing Windows Service ---`n"
-    
-    try {
-        Write-Status "Removing service registration..." "Info"
-        
-        $output = sc.exe delete $ServiceName 2>&1
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Status "Service removed successfully" "Success"
-            return $true
-        }
-        else {
-            # Check if service doesn't exist (which is fine)
-            if ($output -match "does not exist" -or $output -match "not found") {
-                Write-Status "Service does not exist in registry" "Info"
-                return $true
-            }
-            else {
-                Write-Status "Failed to remove service. Exit code: $LASTEXITCODE" "Error"
-                Write-Status "Output: $output" "Error"
-                return $false
-            }
-        }
-    }
-    catch {
-        Write-Status "Error removing service: $_" "Error"
-        return $false
-    }
-}
-
-function Verify-ServiceRemoval {
-    Write-Host "`n--- Verifying Service Removal ---`n"
-    
-    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    
-    if ($service) {
-        Write-Status "Service still exists in registry" "Warning"
-        return $false
-    }
-    
-    Write-Status "Service successfully removed from registry" "Success"
-    return $true
-}
-
-function Show-Summary {
-    param([bool]$Success)
-    
-    Write-Host "`n" + ("=" * 60)
-    
-    if ($Success) {
-        Write-Status "Service uninstalled successfully!" "Success"
-        Write-Host "`nℹ️  The $ServiceName service has been removed."
-        Write-Host "`nℹ️  To reinstall the service, run:"
-        Write-Host "  .\Install-Service.ps1"
-    }
-    else {
-        Write-Status "Service uninstall encountered issues." "Error"
-        Write-Host "`nℹ️  Troubleshooting:"
-        Write-Host "  • Ensure you have Administrator privileges"
-        Write-Host "  • The service may still be running or locked"
-        Write-Host "  • Try running: Stop-Service -Name $ServiceName -Force"
-        Write-Host "  • Then manually delete using: sc.exe delete $ServiceName"
-    }
-    
-    Write-Host ("=" * 60) "`n"
-}
-
-# Main execution
-Write-Host "`n╔═══════════════════════════════════════════════════════════╗"
-Write-Host "║   AppTimeTracker Windows Service Uninstaller               ║"
-Write-Host "╚═══════════════════════════════════════════════════════════╝`n"
-
-# Verify admin privileges
-if (-not (Test-Administrator)) {
-    Write-Status "This script requires Administrator privileges!" "Error"
-    Write-Status "Please run PowerShell as Administrator and try again." "Info"
+# Check if running as Administrator
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Error "This script must be run as Administrator."
+    Write-Host "Please right-click PowerShell and select 'Run as Administrator'."
     exit 1
 }
 
-Write-Status "Running with Administrator privileges" "Success"
+Write-Host ""
+Write-Host "========================================" -ForegroundColor White
+Write-Host "  AppTimeTracker Service Uninstaller" -ForegroundColor White
+Write-Host "========================================" -ForegroundColor White
+Write-Host ""
 
-# Confirm uninstall
+# Check if service exists
+Write-Step "Checking for service..."
+$existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if (-not $existingService) {
+    Write-Warning "Service '$ServiceName' is not installed."
+
+    if ($RemoveData -and (Test-Path $ProgramDataPath)) {
+        Write-Step "Removing data directory..."
+        if (-not $Force) {
+            $response = Read-Host "Remove data directory at $ProgramDataPath? (Y/N)"
+            if ($response -ne "Y" -and $response -ne "y") {
+                Write-Host "Data directory preserved."
+                exit 0
+            }
+        }
+        Remove-Item -Path $ProgramDataPath -Recurse -Force
+        Write-Success "Data directory removed."
+    }
+
+    exit 0
+}
+
+# Confirm uninstallation
 if (-not $Force) {
-    if (-not (Confirm-Uninstall)) {
-        Write-Status "Uninstall cancelled" "Info"
+    Write-Host "This will uninstall the AppTimeTracker service." -ForegroundColor Yellow
+    if ($RemoveData) {
+        Write-Host "The data directory will also be removed: $ProgramDataPath" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    $response = Read-Host "Continue? (Y/N)"
+    if ($response -ne "Y" -and $response -ne "y") {
+        Write-Host "Uninstallation cancelled."
         exit 0
     }
 }
 
-# Stop service if running
-if (-not (Stop-ServiceIfRunning)) {
-    Show-Summary $false
-    exit 1
+# Stop the service
+Write-Step "Stopping service..."
+if ($existingService.Status -eq "Running") {
+    try {
+        Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+        Start-Sleep -Seconds 3
+        Write-Success "Service stopped."
+    } catch {
+        Write-Warning "Could not stop service gracefully: $_"
+        Write-Step "Attempting to kill service process..."
+
+        # Try to find and kill the process
+        $process = Get-Process -Name "AppTimeTracker" -ErrorAction SilentlyContinue
+        if ($process) {
+            Stop-Process -Id $process.Id -Force
+            Start-Sleep -Seconds 2
+        }
+    }
+} else {
+    Write-Success "Service is not running."
 }
 
-# Remove service
-if (-not (Remove-WindowsService)) {
-    Show-Summary $false
-    exit 1
+# Delete the service
+Write-Step "Removing service registration..."
+$result = & sc.exe delete $ServiceName 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Success "Service removed successfully."
+} else {
+    # Service might be marked for deletion, wait and retry
+    Write-Warning "Service marked for deletion. Waiting..."
+    Start-Sleep -Seconds 5
+
+    # Verify removal
+    $checkService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if (-not $checkService) {
+        Write-Success "Service removed successfully."
+    } else {
+        Write-Error "Failed to remove service. A system restart may be required."
+    }
 }
 
-# Verify removal
-if (-not (Verify-ServiceRemoval)) {
-    Show-Summary $false
-    exit 1
+# Remove EventLog source
+Write-Step "Removing EventLog source..."
+try {
+    if ([System.Diagnostics.EventLog]::SourceExists($ServiceName)) {
+        [System.Diagnostics.EventLog]::DeleteEventSource($ServiceName)
+        Write-Success "EventLog source removed."
+    } else {
+        Write-Success "EventLog source not found (already removed)."
+    }
+} catch {
+    Write-Warning "Could not remove EventLog source: $_"
 }
 
-Show-Summary $true
-exit 0
+# Remove data directory if requested
+if ($RemoveData) {
+    Write-Step "Removing data directory..."
+    if (Test-Path $ProgramDataPath) {
+        try {
+            Remove-Item -Path $ProgramDataPath -Recurse -Force
+            Write-Success "Data directory removed: $ProgramDataPath"
+        } catch {
+            Write-Error "Could not remove data directory: $_"
+            Write-Host "    You may need to remove it manually."
+        }
+    } else {
+        Write-Success "Data directory not found (already removed)."
+    }
+} else {
+    if (Test-Path $ProgramDataPath) {
+        Write-Host ""
+        Write-Host "Data directory preserved: $ProgramDataPath" -ForegroundColor Yellow
+        Write-Host "To remove it, run: Remove-Item -Path '$ProgramDataPath' -Recurse -Force"
+    }
+}
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor White
+Write-Host "  Uninstallation Complete" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor White
+Write-Host ""

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Serilog;
+using Serilog.Configuration;
 using Serilog.Core;
 using Serilog.Events;
 
